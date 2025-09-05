@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from langchain_community.document_loaders import YoutubeLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
@@ -26,10 +26,9 @@ app = FastAPI()
 # Configure CORS
 origins = [
     "http://localhost:3000",
-    "http://localhost:8000", # Added for local testing
-    "http://localhost:8001", # Added for local testing
+    "http://localhost:8000",
+    "http://localhost:8001",
     "https://yt-rag-frontend.vercel.app"
-    # Add your Vercel frontend URL here when deployed
 ]
 
 app.add_middleware(
@@ -63,6 +62,7 @@ def get_transcript_documents(video_id: str):
     """Fetches YouTube transcript and formats it for LangChain."""
     print(f"Attempting to fetch transcript for video ID: {video_id}")
     try:
+        # Check for English transcript explicitly
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         english_transcript = None
         for t in transcript_list:
@@ -74,15 +74,16 @@ def get_transcript_documents(video_id: str):
             print(f"Error: Captions not found or not in English for video ID: {video_id}")
             return None, "Captions not found or not in English."
             
-        full_transcript = " ".join([d['text'] for d in english_transcript.fetch()])
-        
-        # Load the transcript into a LangChain Document
+        # Use LangChain's loader for cleaner document generation
         loader = YoutubeLoader(video_id=video_id, add_video_info=True, language="en")
         documents = loader.load()
         
         # Add timestamps to the documents for better retrieval
         timestamps = YouTubeTranscriptApi.get_transcript(video_id)
         
+        if not documents:
+            return None, "Loader returned no documents."
+            
         for doc in documents:
             doc_content_with_timestamps = ""
             for item in timestamps:
@@ -94,9 +95,14 @@ def get_transcript_documents(video_id: str):
         print(f"Successfully fetched and formatted transcript for video ID: {video_id}")
         return documents, None
         
+    except (TranscriptsDisabled, NoTranscriptFound) as e:
+        error_message = f"Transcript is disabled or not found for this video: {str(e)}"
+        print(error_message)
+        return None, error_message
     except Exception as e:
-        print(f"An error occurred while fetching the transcript: {e}")
-        return None, str(e)
+        error_message = f"An unexpected error occurred while fetching the transcript: {str(e)}"
+        print(error_message)
+        return None, error_message
 
 # --- API Endpoints ---
 
@@ -130,7 +136,8 @@ async def analyze_video(payload: URLPayload):
         print("Creating embeddings and vector store...")
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
         vector_store = FAISS.from_documents(docs, embeddings)
-        vector_store.save_local("faiss_index")
+        # On Render, the file system is ephemeral, but saving to disk is good practice for local development or for more persistent cloud solutions
+        vector_store.save_local("faiss_index") 
         print("Vector store created and saved successfully.")
     except Exception as e:
         print(f"Error during vector store creation: {e}")
@@ -149,14 +156,14 @@ async def ask_question(payload: QuestionPayload):
 
     if not vector_store:
         print("Vector store not in memory. Attempting to load from disk.")
+        # Load vector store only if it doesn't exist in memory
         if os.path.exists("faiss_index"):
-            # Load vector store if not in memory
             try:
                 embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
                 vector_store = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
                 print("Vector store loaded from disk.")
-            except Exception:
-                print("Failed to load vector store from disk.")
+            except Exception as e:
+                print("Failed to load vector store from disk:", e)
                 raise HTTPException(status_code=500, detail="Could not load vector store. Please process a video first.")
         else:
             print("Vector store not in memory and file does not exist.")
