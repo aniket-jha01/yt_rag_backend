@@ -1,9 +1,8 @@
-fastapi
-uvicorn[standard]==0.34.0
-langchain
-langchain-google-genai
-youtube-transcript-api==0.6.2
-faiss-cpu
-python-dotenv
-langchain-community
+uvicorn[standard]==0.29.0
+python-dotenv==1.0.1
+langchain-google-genai==0.0.15
+langchain-community==0.2.7
+langchain==0.2.7
+faiss-cpu==1.8.0
 yt-dlp==2024.7.25
+youtube-transcript-api==0.6.2
