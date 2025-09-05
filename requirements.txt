@@ -5,3 +5,4 @@ langchain-google-genai
 youtube-transcript-api
 faiss-cpu
 python-dotenv
+langchain-community
