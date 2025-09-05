@@ -2,7 +2,8 @@ fastapi
 uvicorn[standard]==0.34.0
 langchain
 langchain-google-genai
-youtube-transcript-api
+youtube-transcript-api==0.6.2
 faiss-cpu
 python-dotenv
 langchain-community
+yt-dlp==2024.7.25
