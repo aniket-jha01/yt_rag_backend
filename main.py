@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import yt_dlp
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -11,6 +13,7 @@ from langchain.chains import RetrievalQA
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
+from langchain_core.documents import Document
 
 # Load environment variables
 load_dotenv()
@@ -57,23 +60,56 @@ def get_video_id(url: str) -> str | None:
     match = re.search(regex, url)
     return match.group(1) if match else None
 
-# This utility function has been completely refactored to use LangChain's loader
 def get_transcript_documents(video_id: str):
-    """Fetches YouTube transcript using LangChain's YoutubeLoader."""
+    """
+    Fetches YouTube transcript using yt-dlp and formats it for LangChain.
+    This method is more robust than youtube-transcript-api.
+    """
     try:
-        # Use LangChain's loader which is more robust
-        loader = YoutubeLoader(video_id=video_id, add_video_info=True, language="en")
-        documents = loader.load()
+        ydl_opts = {
+            'writesubtitles': True,
+            'subtitleslangs': ['en'],
+            'skip_download': True,
+            'outtmpl': '%(id)s.%(ext)s',
+            'writeinfojson': True,
+        }
         
-        if not documents:
-            return None, "Loader returned no documents, likely because the video has no transcript."
-        
-        # Optionally, you can still add timestamps if needed, but it's not strictly necessary for the core functionality
-        # The LangChain loader handles the core task of creating document chunks.
-        
-        print(f"Successfully fetched and formatted transcript for video ID: {video_id}")
-        return documents, None
-        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_id, download=False)
+            
+            # Check for available subtitles
+            if 'subtitles' not in info or 'en' not in info['subtitles']:
+                return None, "No English transcript found for this video."
+
+            # Re-fetch with a different option to get the transcript data as a string
+            ydl_opts_get_subs = {
+                'writesubtitles': True,
+                'subtitleslangs': ['en'],
+                'skip_download': True,
+                'outtmpl': '-',
+                'quiet': True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts_get_subs) as ydl_get_subs:
+                extracted_info = ydl_get_subs.extract_info(video_id, download=False)
+                
+                transcript_text = ""
+                # yt-dlp returns the info dict with the 'subtitles' field populated
+                if 'subtitles' in extracted_info and 'en' in extracted_info['subtitles']:
+                    # Assuming the first format is the one we want
+                    sub_url = extracted_info['subtitles']['en'][0]['url']
+                    # Download the subtitle content
+                    subtitle_content = ydl.urlopen(sub_url).read().decode('utf-8')
+                    transcript_text = subtitle_content
+                
+                if not transcript_text:
+                    return None, "Failed to extract transcript text."
+            
+            # Create a single LangChain Document object from the transcript string
+            doc = Document(page_content=transcript_text, metadata={'source': 'YouTube', 'video_id': video_id})
+            
+            print(f"Successfully fetched transcript for video ID: {video_id}")
+            return [doc], None
+            
     except Exception as e:
         error_message = f"An unexpected error occurred while fetching the transcript: {str(e)}"
         print(error_message)
@@ -173,21 +209,11 @@ async def ask_question(payload: QuestionPayload):
             return_source_documents=True
         )
         
-        result = await chain.ainvoke({"query": question})
+        result = chain.invoke({"query": question})
         answer = result['result']
         source_docs = result['source_documents']
         
-        timestamps_found = []
-        for doc in source_docs:
-            lines = doc.page_content.strip().split('\n')
-            for line in lines:
-                if re.match(r"^\d{2}:\d{2} -", line):
-                    timestamps_found.append(line.split(' - ')[0])
-        
-        unique_timestamps = sorted(list(set(timestamps_found)))
-        formatted_timestamps = ", ".join(unique_timestamps)
-        
-        final_answer = f"{answer}\n\nRelevant timestamps: {formatted_timestamps}" if formatted_timestamps else answer
+        final_answer = answer
         
         print("Question answered successfully.")
         return {"success": True, "answer": final_answer}
