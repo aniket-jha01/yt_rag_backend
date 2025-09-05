@@ -28,6 +28,7 @@ origins = [
     "http://localhost:3000",
     "http://localhost:8000", # Added for local testing
     "http://localhost:8001", # Added for local testing
+    "https://yt-rag-frontend.vercel.app"
     # Add your Vercel frontend URL here when deployed
 ]
 
