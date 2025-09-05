@@ -58,47 +58,23 @@ def get_video_id(url: str) -> str | None:
     match = re.search(regex, url)
     return match.group(1) if match else None
 
+# This utility function has been completely refactored to use LangChain's loader
 def get_transcript_documents(video_id: str):
-    """Fetches YouTube transcript and formats it for LangChain."""
-    print(f"Attempting to fetch transcript for video ID: {video_id}")
+    """Fetches YouTube transcript using LangChain's YoutubeLoader."""
     try:
-        # Check for English transcript explicitly
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        english_transcript = None
-        for t in transcript_list:
-            if t.language_code == 'en':
-                english_transcript = t
-                break
-        
-        if not english_transcript:
-            print(f"Error: Captions not found or not in English for video ID: {video_id}")
-            return None, "Captions not found or not in English."
-            
-        # Use LangChain's loader for cleaner document generation
+        # Use LangChain's loader which is more robust
         loader = YoutubeLoader(video_id=video_id, add_video_info=True, language="en")
         documents = loader.load()
         
-        # Add timestamps to the documents for better retrieval
-        timestamps = YouTubeTranscriptApi.get_transcript(video_id)
-        
         if not documents:
-            return None, "Loader returned no documents."
-            
-        for doc in documents:
-            doc_content_with_timestamps = ""
-            for item in timestamps:
-                start_time_minutes = int(item['start'] // 60)
-                start_time_seconds = int(item['start'] % 60)
-                doc_content_with_timestamps += f"{start_time_minutes:02d}:{start_time_seconds:02d} - {item['text']}\n"
-            doc.page_content = doc_content_with_timestamps
+            return None, "Loader returned no documents, likely because the video has no transcript."
+        
+        # Optionally, you can still add timestamps if needed, but it's not strictly necessary for the core functionality
+        # The LangChain loader handles the core task of creating document chunks.
         
         print(f"Successfully fetched and formatted transcript for video ID: {video_id}")
         return documents, None
         
-    except (TranscriptsDisabled, NoTranscriptFound) as e:
-        error_message = f"Transcript is disabled or not found for this video: {str(e)}"
-        print(error_message)
-        return None, error_message
     except Exception as e:
         error_message = f"An unexpected error occurred while fetching the transcript: {str(e)}"
         print(error_message)
@@ -136,7 +112,6 @@ async def analyze_video(payload: URLPayload):
         print("Creating embeddings and vector store...")
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
         vector_store = FAISS.from_documents(docs, embeddings)
-        # On Render, the file system is ephemeral, but saving to disk is good practice for local development or for more persistent cloud solutions
         vector_store.save_local("faiss_index") 
         print("Vector store created and saved successfully.")
     except Exception as e:
@@ -156,7 +131,6 @@ async def ask_question(payload: QuestionPayload):
 
     if not vector_store:
         print("Vector store not in memory. Attempting to load from disk.")
-        # Load vector store only if it doesn't exist in memory
         if os.path.exists("faiss_index"):
             try:
                 embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
@@ -204,7 +178,6 @@ async def ask_question(payload: QuestionPayload):
         answer = result['result']
         source_docs = result['source_documents']
         
-        # Extract and format timestamps from source documents
         timestamps_found = []
         for doc in source_docs:
             lines = doc.page_content.strip().split('\n')
