@@ -1,8 +1,9 @@
+fastapi==0.111.0
 uvicorn[standard]==0.29.0
 python-dotenv==1.0.1
-langchain-google-genai>=0.0.11,<1.0.0
-langchain-community==0.2.7
-langchain==0.2.7
+langchain-google-genai==0.0.11  # This version is needed for compatibility
+langchain-community==0.0.30     # Aligned to work with 0.0.11
+langchain==0.1.0                # Also a stable, earlier version for consistency
 faiss-cpu==1.12.0
 yt-dlp==2024.7.25
 youtube-transcript-api==0.6.2
