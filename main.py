@@ -101,7 +101,8 @@ async def analyze_topic(payload: TopicPayload):
     # Text Chunking
     print("Chunking documents...")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    docs = text_splitter.split_documents(documents)
+    docs = text_splitter.split_documents(documents)[:10]  # Use only the first 10 chunks
+
     print(f"Created {len(docs)} chunks.")
 
     # Embedding and Vector Store
