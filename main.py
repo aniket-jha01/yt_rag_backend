@@ -105,26 +105,20 @@ async def analyze_topic(payload: TopicPayload):
     print(f"Created {len(docs)} chunks.")
 
     # Embedding and Vector Store in batches
+      # Limit to a small number of chunks to prevent timeout
+    docs_to_process = docs[:5]
+    if not docs_to_process:
+        raise HTTPException(status_code=500, detail="No documents to process.")
+
+    # Embedding and Vector Store in a single, small batch
     try:
-        print("Creating embeddings and vector store in batches...")
+        print(f"Creating embeddings and vector store for {len(docs_to_process)} chunks.")
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
+        vector_store = FAISS.from_documents(docs_to_process, embeddings)
         
-        # Process the first 10 chunks to avoid timeout
-        docs_to_process = docs[:10]
-        
-        vector_store = FAISS.from_documents([docs_to_process[0]], embeddings)
-        
-        for doc in docs_to_process[1:]:
-            vector_store.add_documents([doc])
-            time.sleep(1) # Add a small delay between each call
-            
         vector_store.save_local("faiss_index") 
         print("Vector store created and saved successfully.")
     except Exception as e:
-        print(f"Error during vector store creation: {e}")
-        raise HTTPException(status_code=500, detail=f"Error creating vector store: {str(e)}")
-
-    print("Topic processed successfully.")
-    return {"success": True, "message": "Articles processed successfully. Ready to answer questions!"}
 
 @app.post("/ask")
 async def ask_question(payload: QuestionPayload):
