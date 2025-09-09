@@ -1,6 +1,5 @@
 import os
 import re
-import time  # Import time for delays
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -104,8 +103,7 @@ async def analyze_topic(payload: TopicPayload):
     docs = text_splitter.split_documents(documents)
     print(f"Created {len(docs)} chunks.")
 
-    # Embedding and Vector Store in batches
-      # Limit to a small number of chunks to prevent timeout
+    # Limit to a small number of chunks to prevent timeout
     docs_to_process = docs[:5]
     if not docs_to_process:
         raise HTTPException(status_code=500, detail="No documents to process.")
@@ -119,6 +117,11 @@ async def analyze_topic(payload: TopicPayload):
         vector_store.save_local("faiss_index") 
         print("Vector store created and saved successfully.")
     except Exception as e:
+        print(f"Error during vector store creation: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating vector store: {str(e)}")
+
+    print("Topic processed successfully.")
+    return {"success": True, "message": "Articles processed successfully. Ready to answer questions!"}
 
 @app.post("/ask")
 async def ask_question(payload: QuestionPayload):
