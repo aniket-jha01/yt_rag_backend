@@ -1,12 +1,12 @@
 import os
 import re
+import time  # Import time for delays
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from newsapi import NewsApiClient
 
-from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -45,6 +45,7 @@ app.add_middleware(
 
 # In-memory vector store (will be saved to disk)
 vector_store = None
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
 
 # --- Pydantic Models for Request Body Validation ---
 
@@ -67,7 +68,6 @@ def fetch_articles(topic: str):
         if not all_articles or not all_articles['articles']:
             return None, "No articles found for the given topic."
 
-        # Combine articles into a single document
         full_text = ""
         for article in all_articles['articles']:
             if article['title'] and article['content']:
@@ -101,15 +101,22 @@ async def analyze_topic(payload: TopicPayload):
     # Text Chunking
     print("Chunking documents...")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    docs = text_splitter.split_documents(documents)[:10]  # Use only the first 10 chunks
-
+    docs = text_splitter.split_documents(documents)
     print(f"Created {len(docs)} chunks.")
 
-    # Embedding and Vector Store
+    # Embedding and Vector Store in batches
     try:
-        print("Creating embeddings and vector store...")
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
-        vector_store = FAISS.from_documents(docs, embeddings)
+        print("Creating embeddings and vector store in batches...")
+        
+        # Process the first 10 chunks to avoid timeout
+        docs_to_process = docs[:10]
+        
+        vector_store = FAISS.from_documents([docs_to_process[0]], embeddings)
+        
+        for doc in docs_to_process[1:]:
+            vector_store.add_documents([doc])
+            time.sleep(1) # Add a small delay between each call
+            
         vector_store.save_local("faiss_index") 
         print("Vector store created and saved successfully.")
     except Exception as e:
