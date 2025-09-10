@@ -8,12 +8,11 @@ from newsapi import NewsApiClient
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
 from langchain_core.documents import Document
-
-from tenacity import retry, stop_after_attempt, wait_exponential
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 # Load environment variables
 load_dotenv()
@@ -46,7 +45,7 @@ app.add_middleware(
 
 # In-memory vector store (will be saved to disk)
 vector_store = None
-embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # --- Pydantic Models for Request Body Validation ---
 
@@ -74,7 +73,7 @@ def fetch_articles(topic: str):
         
         doc = Document(page_content=full_text, metadata={'source': 'NewsAPI', 'topic': topic})
         
-        print(f"Successfully fetched articles for topic: {topic}")
+        print(f"✅ Successfully fetched articles for topic: {topic}")
         return [doc], None
     
     except Exception as e:
@@ -83,46 +82,26 @@ def fetch_articles(topic: str):
         return None, error_message
 
 
-# Retry wrapper for embeddings
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=10))
-def safe_embed(content: str, embeddings):
-    return embeddings.embed_query(content)
-
-
-def create_vector_store(docs, embeddings):
-    """Embed docs sequentially to avoid 504 errors."""
-    embedded_docs = []
-    for doc in docs:
-        try:
-            _ = safe_embed(doc.page_content, embeddings)  # Force embedding with retry
-            embedded_docs.append(doc)
-        except Exception as e:
-            print(f"Embedding failed for doc: {e}")
-    if not embedded_docs:
-        raise RuntimeError("No documents could be embedded.")
-    return FAISS.from_documents(embedded_docs, embeddings)
-
-
 # --- API Endpoints ---
 
 @app.post("/analyze_topic")
 async def analyze_topic(payload: TopicPayload):
     """Endpoint to process news articles for a given topic and store its vector index."""
-    print(f"Received request to analyze topic: {payload.topic}")
+    print(f"📩 Received request to analyze topic: {payload.topic}")
     global vector_store
 
     topic = payload.topic
     
     documents, error = fetch_articles(topic)
     if error:
-        print(f"Article fetching failed: {error}")
+        print(f"❌ Article fetching failed: {error}")
         raise HTTPException(status_code=500, detail=f"Error fetching articles: {error}")
 
     # Text Chunking
-    print("Chunking documents...")
+    print("🔪 Chunking documents...")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     docs = text_splitter.split_documents(documents)
-    print(f"Created {len(docs)} chunks.")
+    print(f"📄 Created {len(docs)} chunks.")
 
     # Limit to prevent timeouts
     docs_to_process = docs[:5]
@@ -130,42 +109,42 @@ async def analyze_topic(payload: TopicPayload):
         raise HTTPException(status_code=500, detail="No documents to process.")
 
     try:
-        print(f"Creating embeddings and vector store for {len(docs_to_process)} chunks.")
-        vector_store = create_vector_store(docs_to_process, embeddings)
+        print(f"🧠 Creating embeddings and vector store for {len(docs_to_process)} chunks...")
+        vector_store = FAISS.from_documents(docs_to_process, embeddings)
         
         vector_store.save_local("faiss_index") 
-        print("Vector store created and saved successfully.")
+        print("✅ Vector store created and saved successfully.")
     except Exception as e:
-        print(f"Error during vector store creation: {e}")
+        print(f"❌ Error during vector store creation: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating vector store: {str(e)}")
 
-    print("Topic processed successfully.")
+    print("🎉 Topic processed successfully.")
     return {"success": True, "message": "Articles processed successfully. Ready to answer questions!"}
 
 
 @app.post("/ask")
 async def ask_question(payload: QuestionPayload):
     """Endpoint to answer questions based on the stored vector index."""
-    print(f"Received question: {payload.question}")
+    print(f"📩 Received question: {payload.question}")
     global vector_store
     
     question = payload.question
 
     if not vector_store:
-        print("Vector store not in memory. Attempting to load from disk.")
+        print("⚠️ Vector store not in memory. Attempting to load from disk.")
         if os.path.exists("faiss_index"):
             try:
                 vector_store = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
-                print("Vector store loaded from disk.")
+                print("✅ Vector store loaded from disk.")
             except Exception as e:
-                print("Failed to load vector store from disk:", e)
+                print("❌ Failed to load vector store from disk:", e)
                 raise HTTPException(status_code=500, detail="Could not load vector store. Please process a topic first.")
         else:
-            print("Vector store not in memory and file does not exist.")
+            print("⚠️ Vector store not in memory and file does not exist.")
             raise HTTPException(status_code=400, detail="No topic has been processed yet. Please analyze a topic first.")
 
     try:
-        print("Setting up RetrievalQA chain...")
+        print("🤖 Setting up RetrievalQA chain...")
         retriever = vector_store.as_retriever()
         llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=GEMINI_API_KEY)
         prompt_template = """
@@ -197,9 +176,9 @@ async def ask_question(payload: QuestionPayload):
         result = await chain.ainvoke({"query": question})
         answer = result['result']
         
-        print("Question answered successfully.")
+        print("✅ Question answered successfully.")
         return {"success": True, "answer": answer}
         
     except Exception as e:
-        print(f"An error occurred while answering the question: {e}")
+        print(f"❌ An error occurred while answering the question: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
