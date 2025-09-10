@@ -13,6 +13,8 @@ from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
 from langchain_core.documents import Document
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 # Load environment variables
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -57,9 +59,7 @@ class QuestionPayload(BaseModel):
 # --- Utility Functions ---
 
 def fetch_articles(topic: str):
-    """
-    Fetches news articles from News API based on a topic.
-    """
+    """Fetches news articles from News API based on a topic."""
     try:
         newsapi = NewsApiClient(api_key=NEWS_API_KEY)
         all_articles = newsapi.get_everything(q=topic, language='en', sort_by='relevancy')
@@ -82,6 +82,27 @@ def fetch_articles(topic: str):
         print(error_message)
         return None, error_message
 
+
+# Retry wrapper for embeddings
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=10))
+def safe_embed(content: str, embeddings):
+    return embeddings.embed_query(content)
+
+
+def create_vector_store(docs, embeddings):
+    """Embed docs sequentially to avoid 504 errors."""
+    embedded_docs = []
+    for doc in docs:
+        try:
+            _ = safe_embed(doc.page_content, embeddings)  # Force embedding with retry
+            embedded_docs.append(doc)
+        except Exception as e:
+            print(f"Embedding failed for doc: {e}")
+    if not embedded_docs:
+        raise RuntimeError("No documents could be embedded.")
+    return FAISS.from_documents(embedded_docs, embeddings)
+
+
 # --- API Endpoints ---
 
 @app.post("/analyze_topic")
@@ -99,20 +120,18 @@ async def analyze_topic(payload: TopicPayload):
 
     # Text Chunking
     print("Chunking documents...")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     docs = text_splitter.split_documents(documents)
     print(f"Created {len(docs)} chunks.")
 
-    # Limit to a small number of chunks to prevent timeout
+    # Limit to prevent timeouts
     docs_to_process = docs[:5]
     if not docs_to_process:
         raise HTTPException(status_code=500, detail="No documents to process.")
 
-    # Embedding and Vector Store in a single, small batch
     try:
         print(f"Creating embeddings and vector store for {len(docs_to_process)} chunks.")
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
-        vector_store = FAISS.from_documents(docs_to_process, embeddings)
+        vector_store = create_vector_store(docs_to_process, embeddings)
         
         vector_store.save_local("faiss_index") 
         print("Vector store created and saved successfully.")
@@ -122,6 +141,7 @@ async def analyze_topic(payload: TopicPayload):
 
     print("Topic processed successfully.")
     return {"success": True, "message": "Articles processed successfully. Ready to answer questions!"}
+
 
 @app.post("/ask")
 async def ask_question(payload: QuestionPayload):
@@ -135,7 +155,6 @@ async def ask_question(payload: QuestionPayload):
         print("Vector store not in memory. Attempting to load from disk.")
         if os.path.exists("faiss_index"):
             try:
-                embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=GEMINI_API_KEY)
                 vector_store = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
                 print("Vector store loaded from disk.")
             except Exception as e:
