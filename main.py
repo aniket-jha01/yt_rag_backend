@@ -13,12 +13,12 @@ from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
 from langchain_core.documents import Document
 from langchain_community.embeddings import HuggingFaceEmbeddings
-
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 # Load environment variables
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
-
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 # Check for API keys
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY environment variable not set.")
@@ -45,7 +45,10 @@ app.add_middleware(
 
 # In-memory vector store (will be saved to disk)
 vector_store = None
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L3-v2")
+embeddings = HuggingFaceInferenceAPIEmbeddings(
+    api_key=HUGGINGFACE_API_KEY,
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
 
 # --- Pydantic Models for Request Body Validation ---
 
