@@ -7,11 +7,11 @@ from newsapi import NewsApiClient
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
-from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.prompts import PromptTemplate
 from langchain_core.documents import Document
-from langchain_openai import ChatOpenAI
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.chat_models import ChatOpenAI
 
 # Load environment variables
 load_dotenv()
