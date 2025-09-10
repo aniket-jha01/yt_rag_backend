@@ -45,7 +45,7 @@ app.add_middleware(
 
 # In-memory vector store (will be saved to disk)
 vector_store = None
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L3-v2")
 
 # --- Pydantic Models for Request Body Validation ---
 
